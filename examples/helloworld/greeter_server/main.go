@@ -25,13 +25,16 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
 	pb "google.golang.org/grpc/examples/helloworld/helloworld"
 )
 
 var (
-	port = flag.Int("port", 50051, "The server port")
+	port    = flag.Int("port", 50051, "The server port")
+	restful = flag.Int("restful", 8080, "the port to restful serve on")
 )
 
 // server is used to implement helloworld.GreeterServer.
@@ -46,6 +49,9 @@ func (s *server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloRe
 }
 
 func main() {
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	flag.Parse()
 	lis, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", *port))
 	if err != nil {
@@ -54,7 +60,32 @@ func main() {
 	s := grpc.NewServer()
 	pb.RegisterGreeterServer(s, &server{})
 	log.Printf("server listening at %v", lis.Addr())
-	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
+	// if err := s.Serve(lis); err != nil {
+	//         log.Fatalf("failed to serve: %v", err)
+	// }
+	go func() {
+		if err := s.Serve(lis); err != nil {
+			log.Fatalf("failed to serve: %v", err)
+		}
+	}()
+
+	conn, err := grpc.Dial(
+		":50051",
+		grpc.WithInsecure(),
+	)
+	if err != nil {
+		log.Fatal(err)
 	}
+	gwmux := runtime.NewServeMux()
+	err = pb.RegisterGreeterHandler(context.Background(), gwmux, conn)
+	if err != nil {
+		log.Fatal(err)
+	}
+	gwServer := &http.Server{
+		Addr:    fmt.Sprintf(":%d", *restful),
+		Handler: gwmux,
+	}
+	log.Println("Serving gRPC-Gateway on http://0.0.0.0" + fmt.Sprintf(":%d", *restful))
+	log.Fatalln(gwServer.ListenAndServe())
+	// opts := []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 }
